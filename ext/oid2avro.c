@@ -28,7 +28,7 @@ avro_schema_t schema_for_timestamp(bool with_tz, char *attrname);
 avro_schema_t schema_for_interval(void);
 void schema_for_date_fields(avro_schema_t record_schema);
 void schema_for_time_fields(avro_schema_t record_schema);
-avro_schema_t schema_for_special_times(avro_schema_t record_schema,, char *attrname);
+avro_schema_t schema_for_special_times(avro_schema_t record_schema, char *attrname);
 
 int update_avro_with_datum(avro_value_t *output_val, Oid typid, Datum pg_datum);
 int update_avro_with_date(avro_value_t *union_val, DateADT date);
