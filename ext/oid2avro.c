@@ -22,7 +22,7 @@
 
 avro_schema_t schema_for_oid(Oid typid, char *attrname);
 avro_schema_t schema_for_numeric(void);
-avro_schema_t schema_for_date(void);
+avro_schema_t schema_for_date(char *attrname);
 avro_schema_t schema_for_time_tz(void);
 avro_schema_t schema_for_timestamp(bool with_tz, char *attrname);
 avro_schema_t schema_for_interval(void);
@@ -451,10 +451,10 @@ void schema_for_time_fields(avro_schema_t record_schema) {
     avro_schema_decref(column_schema);
 }
 
-avro_schema_t schema_for_date() {
-    avro_schema_t record_schema = avro_schema_record("Date", PREDEFINED_SCHEMA_NAMESPACE);
+avro_schema_t schema_for_date(char *attrname) {
+    avro_schema_t record_schema = avro_schema_record(yolocat(attrname, "_Date"), PREDEFINED_SCHEMA_NAMESPACE);
     schema_for_date_fields(record_schema);
-    return schema_for_special_times(record_schema);
+    return schema_for_special_times(record_schema, attrname);
 }
 
 int update_avro_with_date(avro_value_t *union_val, DateADT date) {
