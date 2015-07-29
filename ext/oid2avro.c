@@ -20,15 +20,15 @@
 #error Expecting timestamps to be represented as integers, not as floating-point.
 #endif
 
-avro_schema_t schema_for_oid(Oid typid, char *attrname);
+avro_schema_t schema_for_oid(Oid typid);
 avro_schema_t schema_for_numeric(void);
-avro_schema_t schema_for_date(char *attrname);
+avro_schema_t schema_for_date(void);
 avro_schema_t schema_for_time_tz(void);
-avro_schema_t schema_for_timestamp(bool with_tz, char *attrname);
+avro_schema_t schema_for_timestamp(bool with_tz);
 avro_schema_t schema_for_interval(void);
 void schema_for_date_fields(avro_schema_t record_schema);
 void schema_for_time_fields(avro_schema_t record_schema);
-avro_schema_t schema_for_special_times(avro_schema_t record_schema, char *attrname);
+avro_schema_t schema_for_special_times(avro_schema_t record_schema);
 
 int update_avro_with_datum(avro_value_t *output_val, Oid typid, Datum pg_datum);
 int update_avro_with_date(avro_value_t *union_val, DateADT date);
@@ -39,6 +39,9 @@ int update_avro_with_bytes(avro_value_t *output_val, bytea *bytes);
 int update_avro_with_char(avro_value_t *output_val, char c);
 int update_avro_with_string(avro_value_t *output_val, Oid typid, Datum pg_datum);
 
+static avro_schema_t yolo_schema_for_date = NULL;
+static avro_schema_t yolo_schema_for_timestamp_t = NULL;
+static avro_schema_t yolo_schema_for_timestamp_f = NULL;
 
 /* Returns the relation object for the index that we're going to use as key for a
  * particular table. (Indexes are relations too!) Returns null if the table is unkeyed.
@@ -116,11 +119,15 @@ avro_schema_t schema_for_table_row(Relation rel) {
     record_schema = avro_schema_record(relname, namespace.data);
     tupdesc = RelationGetDescr(rel);
 
+    yolo_schema_for_date = schema_for_date();
+    yolo_schema_for_timestamp_t = schema_for_timestamp(true);
+    yolo_schema_for_timestamp_f = schema_for_timestamp(false);
+
     for (int i = 0; i < tupdesc->natts; i++) {
         Form_pg_attribute attr = tupdesc->attrs[i];
         if (attr->attisdropped) continue; /* skip dropped columns */
 
-        column_schema = schema_for_oid(attr->atttypid, NameStr(attr->attname));
+        column_schema = schema_for_oid(attr->atttypid);
         avro_schema_record_field_append(record_schema, NameStr(attr->attname), column_schema);
         avro_schema_decref(column_schema);
     }
@@ -209,7 +216,7 @@ int tuple_to_avro_key(avro_value_t *output_val, TupleDesc tupdesc, HeapTuple tup
 
 /* Generates an Avro schema that can be used to encode a Postgres type
  * with the given OID. */
-avro_schema_t schema_for_oid(Oid typid, char *attrname) {
+avro_schema_t schema_for_oid(Oid typid) {
     avro_schema_t value_schema, null_schema, union_schema;
 
     switch (typid) {
@@ -242,7 +249,7 @@ avro_schema_t schema_for_oid(Oid typid, char *attrname) {
         /* Date/time types. We don't bother with abstime, reltime and tinterval (which are based
          * on Unix timestamps with 1-second resolution), as they are deprecated. */
         case DATEOID:        /* date: 32-bit signed integer, resolution of 1 day */
-            return schema_for_date();
+            return avro_schema_link(yolo_schema_for_date);
         case TIMEOID:        /* time without time zone: microseconds since start of day */
             value_schema = avro_schema_long();
             break;
@@ -250,9 +257,9 @@ avro_schema_t schema_for_oid(Oid typid, char *attrname) {
             value_schema = schema_for_time_tz();
             break;
         case TIMESTAMPOID:   /* timestamp without time zone: datetime, microseconds since epoch */
-            return schema_for_timestamp(false, attrname);
+            return avro_schema_link(yolo_schema_for_timestamp_f);
         case TIMESTAMPTZOID: /* timestamp with time zone, timestamptz: datetime with time zone */
-            return schema_for_timestamp(true, attrname);
+            return avro_schema_link(yolo_schema_for_timestamp_t);
         case INTERVALOID:    /* @ <number> <units>, time interval */
             value_schema = schema_for_interval();
             break;
@@ -400,7 +407,7 @@ avro_schema_t schema_for_numeric() {
     return avro_schema_double(); /* FIXME use decimal logical type: http://avro.apache.org/docs/1.7.7/spec.html#Decimal */
 }
 
-avro_schema_t schema_for_special_times(avro_schema_t record_schema, char *attrname) {
+avro_schema_t schema_for_special_times(avro_schema_t record_schema) {
     avro_schema_t union_schema, null_schema, enum_schema;
 
     union_schema = avro_schema_union();
@@ -411,7 +418,7 @@ avro_schema_t schema_for_special_times(avro_schema_t record_schema, char *attrna
     avro_schema_union_append(union_schema, record_schema);
     avro_schema_decref(record_schema);
 
-    enum_schema = avro_schema_enum(yolocat(attrname, "_SpecialTime")); // TODO needs namespace
+    enum_schema = avro_schema_enum("SpecialTime"); // TODO needs namespace
     avro_schema_enum_symbol_append(enum_schema, "POS_INFINITY");
     avro_schema_enum_symbol_append(enum_schema, "NEG_INFINITY");
     avro_schema_union_append(union_schema, enum_schema);
@@ -451,10 +458,10 @@ void schema_for_time_fields(avro_schema_t record_schema) {
     avro_schema_decref(column_schema);
 }
 
-avro_schema_t schema_for_date(char *attrname) {
-    avro_schema_t record_schema = avro_schema_record(yolocat(attrname, "_Date"), PREDEFINED_SCHEMA_NAMESPACE);
+avro_schema_t schema_for_date() {
+    avro_schema_t record_schema = avro_schema_record("Date", PREDEFINED_SCHEMA_NAMESPACE);
     schema_for_date_fields(record_schema);
-    return schema_for_special_times(record_schema, attrname);
+    return schema_for_special_times(record_schema);
 }
 
 int update_avro_with_date(avro_value_t *union_val, DateADT date) {
@@ -542,18 +549,14 @@ int update_avro_with_time_tz(avro_value_t *record_val, TimeTzADT *time) {
  * Clients can force UTC output by setting the environment variable PGTZ=UTC, or by
  * executing "SET SESSION TIME ZONE UTC;".
  */
+avro_schema_t schema_for_timestamp(bool with_tz) {
+    avro_schema_t record_schema;
+    if(with_tz) {
+      record_schema = avro_schema_record("DateTime_TZ", PREDEFINED_SCHEMA_NAMESPACE);
+    } else {
+      record_schema = avro_schema_record("DateTime", PREDEFINED_SCHEMA_NAMESPACE);
+    }
 
-char* yolocat(char *s1, char *s2)
-{
-    char *result = malloc(strlen(s1)+strlen(s2)+1);//+1 for the zero-terminator
-    //in real code you would check for errors in malloc here
-    strcpy(result, s1);
-    strcat(result, s2);
-    return result;
-}
-
-avro_schema_t schema_for_timestamp(bool with_tz, char *attrname) {
-    avro_schema_t record_schema = avro_schema_record(yolocat(attrname, "_DateTime"), PREDEFINED_SCHEMA_NAMESPACE);
     schema_for_date_fields(record_schema);
     schema_for_time_fields(record_schema);
 
@@ -562,7 +565,7 @@ avro_schema_t schema_for_timestamp(bool with_tz, char *attrname) {
         avro_schema_record_field_append(record_schema, "zoneOffset", column_schema);
         avro_schema_decref(column_schema);
     }
-    return schema_for_special_times(record_schema, attrname);
+    return schema_for_special_times(record_schema);
 }
 
 int update_avro_with_timestamp(avro_value_t *union_val, bool with_tz, Timestamp timestamp) {
